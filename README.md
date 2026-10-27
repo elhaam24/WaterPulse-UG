@@ -209,9 +209,16 @@ Copy the sample environment file:
 ```bash
 cp .env.example .env
 ```
-Optionally provide your Google Gemini API Key in `.env`:
+Configure your environment keys in `.env`:
 ```env
+# Google Gemini API Key (optional, defaults to deterministic fallback if not set)
 GEMINI_API_KEY="your-gemini-api-key-here"
+
+# Africa's Talking Live / Sandbox Credentials
+AT_API_KEY="your-africas-talking-api-key"
+AT_USERNAME="sandbox" # or your live username
+AT_SENDER_ID=""       # optional registered shortcode or alphanumeric ID
+
 PORT=3000
 ```
 
@@ -226,7 +233,7 @@ http://localhost:3000
 ```
 
 ### 4. Running Automated Tests
-Run the deterministic scoring and boundary verification tests:
+Run the deterministic scoring, boundary verification, and SMS parsing unit tests:
 ```bash
 npm test
 ```
@@ -235,7 +242,83 @@ All test suites verify:
 - Population impact boundaries (<50, 50–199, 200–499, 500+)
 - School and health center point additions (SDG 4 verification)
 - Priority band classifications (`Low`, `Medium`, `High`)
-- Provisional scoring flags on missing parameters
+- Phone number privacy masking (`+256 77 •••• 123`)
+- Unstructured SMS parsing (duration, population, category, school, health center)
+
+---
+
+## 📱 Africa's Talking Live SMS Webhook Pipeline
+
+WaterPulse UG supports real-time inbound SMS reporting via the **Africa's Talking SMS API**.
+
+```
+Citizen Phone (+256...)
+       │ (SMS: "Borehole broken Mukono near St Kizito School 5 days 300 people")
+       ▼
+Africa's Talking SMS Gateway
+       │ POST /api/sms/incoming (via Ngrok tunnel in local dev)
+       ▼
+WaterPulse UG Express Backend
+       ├── 1. Google Gemini 3.8 Flash NLP parser (unstructured text -> JSON)
+       ├── 2. Deterministic priority scoring engine (0-100 pts & Priority Band)
+       ├── 3. Reporter phone privacy masking (+256 77 •••• 567)
+       ├── 4. Ticket generation (#WP-4821)
+       └── 5. Immediate automated outbound SMS confirmation to citizen:
+              "WaterPulse UG: Report logged for St Kizito School Borehole!
+               Priority: Medium (65 pts). Ticket ID: #WP-4821.
+               We have alerted the District Water Office."
+```
+
+### Local Testing with Ngrok & Africa's Talking Sandbox
+
+1. **Start the local dev server**:
+   ```bash
+   npm run dev
+   ```
+
+2. **Expose port 3000 using Ngrok**:
+   ```bash
+   ngrok http 3000
+   ```
+   Copy the generated HTTPS URL, e.g. `https://xxxx-xx-xx.ngrok-free.app`.
+
+3. **Configure Africa's Talking Sandbox SMS Callback URL**:
+   - Go to [Africa's Talking Sandbox Dashboard](https://account.africastalking.com/).
+   - Navigate to **SMS** > **SMS Callback URLs** > **Incoming Messages**.
+   - Set the callback URL to:
+     ```
+     https://xxxx-xx-xx.ngrok-free.app/api/sms/incoming
+     ```
+   - Click **Submit**.
+
+4. **Simulate Inbound SMS from the Sandbox Simulator**:
+   - Launch the Africa's Talking Simulator: [https://simulator.africastalking.com:1517/](https://simulator.africastalking.com:1517/)
+   - Enter your sandbox phone number (e.g., `+256771234567`).
+   - Send an SMS to the sandbox shortcode (e.g., `20880`):
+     ```
+     Borehole broken Mukono near St Kizito School 5 days 300 people
+     ```
+   - Check the console logs in your terminal:
+     You will observe the unstructured SMS parsed, scored at 65 pts (Medium), reporter number masked, and an automated SMS response dispatched to the simulator.
+
+5. **Instant CLI Test via cURL**:
+   You can also test the webhook directly without Ngrok:
+   ```bash
+   curl -X POST http://localhost:3000/api/sms/incoming \
+     -H "Content-Type: application/json" \
+     -d '{
+       "from": "+256771234567",
+       "to": "20880",
+       "text": "Borehole broken Mukono near St Kizito School 5 days 300 people",
+       "id": "ATXid_1234567"
+     }'
+   ```
+
+6. **View Inbound SMS Log**:
+   Inspect processed SMS tickets anytime at:
+   ```bash
+   curl http://localhost:3000/api/sms/incoming
+   ```
 
 ### 5. Production Build
 Compile both the frontend assets and server bundle:
